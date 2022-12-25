@@ -10,6 +10,10 @@ struct Opt {
     #[argh(switch)]
     frames: bool,
 
+    /// frames
+    #[argh(switch)]
+    frames_constz: bool,
+
     /// bruteforce
     #[argh(switch)]
     bruteforce: bool,
@@ -259,6 +263,29 @@ fn generate_face_only() -> Model {
     mv.to_model()
 }
 
+fn generate_frames_constz() {
+    let mut mv = MonotonicVoxel::new();
+
+    let mut idx = 0;
+    for z in -SIZE..=SIZE {
+        for y in -SIZE..=SIZE {
+            for x in -SIZE..=SIZE {
+                if test(x, y, z) {
+                    mv.add([x, y, z]);
+                }
+            }
+        }
+        if z < 0 {
+            continue;
+        }
+
+        let model = mv.to_model();
+        let filename = format!("constz/test_{:03}.obj", idx);
+        model.serialize(&filename).unwrap();
+        idx += 1;
+    }
+}
+
 fn generate_frames() {
     let mut mv = MonotonicVoxel::new();
 
@@ -272,10 +299,10 @@ fn generate_frames() {
                     mv.add([x, y, z]);
 
                     count += 1;
-                    if count % 40000 == 0 {
+                    if count % 20000 == 0 {
                         eprintln!("render={:?}", (x, y, z));
                         let model = mv.to_model();
-                        let filename = format!("test_{:03}.obj", idx);
+                        let filename = format!("constblock/test_{:03}.obj", idx);
                         model.serialize(&filename).unwrap();
                         idx += 1;
                     }
@@ -288,7 +315,9 @@ fn generate_frames() {
 fn main() {
     let opt: Opt = argh::from_env();
 
-    if opt.frames {
+    if opt.frames_constz {
+        generate_frames_constz();
+    } else if opt.frames {
         generate_frames();
     } else {
         let model = if opt.bruteforce {
