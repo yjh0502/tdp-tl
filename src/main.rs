@@ -262,23 +262,26 @@ fn generate_face_only() -> Model {
 fn generate_frames() {
     let mut mv = MonotonicVoxel::new();
 
+    let mut count: usize = 0;
+
     let mut idx = 0;
     for z in -SIZE..=SIZE {
         for y in -SIZE..=SIZE {
             for x in -SIZE..=SIZE {
                 if test(x, y, z) {
                     mv.add([x, y, z]);
+
+                    count += 1;
+                    if count % 40000 == 0 {
+                        eprintln!("render={:?}", (x, y, z));
+                        let model = mv.to_model();
+                        let filename = format!("test_{:03}.obj", idx);
+                        model.serialize(&filename).unwrap();
+                        idx += 1;
+                    }
                 }
             }
         }
-        if z < 0 {
-            continue;
-        }
-
-        let model = mv.to_model();
-        let filename = format!("test_{:03}.obj", idx);
-        model.serialize(&filename).unwrap();
-        idx += 1;
     }
 }
 
