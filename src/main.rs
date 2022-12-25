@@ -1,6 +1,23 @@
 use anyhow::Result;
+use argh::FromArgs;
 use std::fs::File;
 use std::ops::Range;
+
+#[derive(FromArgs)]
+/// Reach new heights.
+struct Opt {
+    /// frames
+    #[argh(switch)]
+    frames: bool,
+
+    /// bruteforce
+    #[argh(switch)]
+    bruteforce: bool,
+
+    /// bruteforce
+    #[argh(switch)]
+    shell: bool,
+}
 
 // single range
 
@@ -175,8 +192,23 @@ fn test(x: i32, y: i32, z: i32) -> bool {
     return x * x + y * y + z * z < SIZE * SIZE;
 }
 
-#[allow(unused)]
-fn test_brute_force() {
+fn generate_brute_force() -> Model {
+    let mut m = Model::default();
+
+    for z in -SIZE..=SIZE {
+        for y in -SIZE..=SIZE {
+            for x in -SIZE..=SIZE {
+                if test(x, y, z) {
+                    m.add_cube([x, y, z]);
+                }
+            }
+        }
+    }
+
+    m
+}
+
+fn generate_shell() -> Model {
     let mut m = Model::default();
 
     const NEIGHBORS: [[i32; 3]; 6] = [
@@ -209,10 +241,25 @@ fn test_brute_force() {
         }
     }
 
-    m.serialize("test.obj").unwrap();
+    m
 }
 
-fn main() {
+fn generate_face_only() -> Model {
+    let mut mv = MonotonicVoxel::new();
+
+    for z in -SIZE..=SIZE {
+        for y in -SIZE..=SIZE {
+            for x in -SIZE..=SIZE {
+                if test(x, y, z) {
+                    mv.add([x, y, z]);
+                }
+            }
+        }
+    }
+    mv.to_model()
+}
+
+fn generate_frames() {
     let mut mv = MonotonicVoxel::new();
 
     let mut idx = 0;
@@ -232,5 +279,23 @@ fn main() {
         let filename = format!("test_{:03}.obj", idx);
         model.serialize(&filename).unwrap();
         idx += 1;
+    }
+}
+
+fn main() {
+    let opt: Opt = argh::from_env();
+
+    if opt.frames {
+        generate_frames();
+    } else {
+        let model = if opt.bruteforce {
+            generate_brute_force()
+        } else if opt.shell {
+            generate_shell()
+        } else {
+            generate_face_only()
+        };
+
+        model.serialize("test.obj").unwrap();
     }
 }
