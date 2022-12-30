@@ -1,5 +1,6 @@
 use anyhow::Result;
 use argh::FromArgs;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::ops::Range;
 
@@ -27,42 +28,21 @@ struct Opt {
     inject: bool,
 }
 
-// single range
-
-const MONOTONIC_VOXEL_SIZE: usize = 300;
-
 // RLE, over Z axis,
 struct MonotonicVoxel {
-    ranges: Box<[Vec<Range<i32>>]>,
+    ranges: BTreeMap<[i32; 2], Vec<Range<i32>>>,
 }
 
 impl MonotonicVoxel {
     fn new() -> Self {
-        let l = MONOTONIC_VOXEL_SIZE * MONOTONIC_VOXEL_SIZE;
-        let mut ranges = Vec::with_capacity(l);
-        for _ in 0..l {
-            ranges.push(Vec::new());
-        }
-
         Self {
-            ranges: ranges.into_boxed_slice(),
+            ranges: BTreeMap::new(),
         }
-    }
-
-    fn idx(coord: [i32; 3]) -> Option<usize> {
-        let i = coord[0] + MONOTONIC_VOXEL_SIZE as i32 / 2;
-        let j = coord[1] + MONOTONIC_VOXEL_SIZE as i32 / 2;
-        if i < 0 || j < 0 || i >= MONOTONIC_VOXEL_SIZE as i32 || j >= MONOTONIC_VOXEL_SIZE as i32 {
-            return None;
-        }
-
-        let idx = (i * MONOTONIC_VOXEL_SIZE as i32 + j) as usize;
-        Some(idx)
     }
 
     fn occupied(&self, coord: [i32; 3]) -> bool {
-        if let Some(idx) = Self::idx(coord) {
-            for range in &self.ranges[idx] {
+        if let Some(ranges) = self.ranges.get(&[coord[0], coord[1]]) {
+            for range in ranges {
                 if range.contains(&coord[2]) {
                     return true;
                 }
@@ -73,38 +53,45 @@ impl MonotonicVoxel {
 
     fn add(&mut self, coord: [i32; 3]) -> bool {
         let z = coord[2];
+        use std::collections::btree_map::Entry;
 
-        let idx = Self::idx(coord).unwrap();
+        match self.ranges.entry([coord[0], coord[1]]) {
+            Entry::Vacant(v) => {
+                v.insert(vec![z..z + 1]);
+                true
+            }
+            Entry::Occupied(mut v) => {
+                let r = v.get_mut();
+                for r in r {
+                    if r.contains(&z) {
+                        return false;
+                    } else if r.start == z + 1 {
+                        *r = z..r.end;
+                        return true;
+                    } else if r.end == z {
+                        *r = r.start..(z + 1);
+                        return true;
+                    }
+                }
 
-        for r in &mut self.ranges[idx] {
-            if r.contains(&z) {
-                return false;
-            } else if r.start == z + 1 {
-                *r = z..r.end;
-                return true;
-            } else if r.end == z {
-                *r = r.start..(z + 1);
-                return true;
+                let r = v.get_mut();
+                r.push(z..(z + 1));
+                true
             }
         }
-        self.ranges[idx].push(z..(z + 1));
-        true
     }
 
     fn to_model(&self) -> Model {
         let mut model = Model::default();
 
-        for (idx, ranges) in self.ranges.iter().enumerate() {
+        for (coord, ranges) in self.ranges.iter() {
             for range in ranges {
                 if Range::is_empty(range) {
                     continue;
                 }
 
-                let i = idx / MONOTONIC_VOXEL_SIZE;
-                let j = idx % MONOTONIC_VOXEL_SIZE;
-
-                let x = i as i32 - MONOTONIC_VOXEL_SIZE as i32 / 2;
-                let y = j as i32 - MONOTONIC_VOXEL_SIZE as i32 / 2;
+                let x = coord[0];
+                let y = coord[1];
 
                 model.add_face([x, y, range.start], [1, 1, 0]);
                 model.add_face([x, y, range.end], [1, 1, 0]);
@@ -292,7 +279,7 @@ fn generate_frames_constz() {
 }
 
 impl MonotonicVoxel {
-    fn inject_at(&mut self, zlow: i32, zhigh: i32, pos0: [i32; 3]) {
+    fn inject_at(&mut self, zlow: i32, zhigh: i32, pos0: [i32; 3], mut n: usize) {
         use std::collections::BinaryHeap;
 
         #[derive(Clone, Copy, Ord, PartialEq, Eq, Debug)]
@@ -303,7 +290,7 @@ impl MonotonicVoxel {
         }
         impl std::cmp::PartialOrd for HeapItem {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                Some(other.dist.cmp(&self.dist).then(self.pos.cmp(&other.pos)))
+                Some(other.dist.cmp(&self.dist))
             }
         }
 
@@ -331,7 +318,11 @@ impl MonotonicVoxel {
 
             if !self.occupied(pos) {
                 self.add(pos);
-                break;
+
+                n -= 1;
+                if n == 0 {
+                    break;
+                }
             }
 
             let directions = [
@@ -372,9 +363,7 @@ fn generate_inject() {
     // unit: 0.02mm, layer thickness: 0.2mm, nozzle size: 0.4mm
     // 20mm
     for x in 0..100 {
-        for _i in 0..200 {
-            mv.inject_at(-5, 5, [x, 0, 0]);
-        }
+        mv.inject_at(-5, 5, [x, 0, 0], 200);
     }
 
     let model = mv.to_model();
