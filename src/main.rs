@@ -21,6 +21,10 @@ struct Opt {
     /// bruteforce
     #[argh(switch)]
     shell: bool,
+
+    /// inject
+    #[argh(switch)]
+    inject: bool,
 }
 
 // single range
@@ -29,7 +33,7 @@ const MONOTONIC_VOXEL_SIZE: usize = 300;
 
 // RLE, over Z axis,
 struct MonotonicVoxel {
-    ranges: Box<[Range<i32>]>,
+    ranges: Box<[Vec<Range<i32>>]>,
 }
 
 impl MonotonicVoxel {
@@ -37,7 +41,7 @@ impl MonotonicVoxel {
         let l = MONOTONIC_VOXEL_SIZE * MONOTONIC_VOXEL_SIZE;
         let mut ranges = Vec::with_capacity(l);
         for _ in 0..l {
-            ranges.push(0i32..0i32);
+            ranges.push(Vec::new());
         }
 
         Self {
@@ -58,11 +62,13 @@ impl MonotonicVoxel {
 
     fn occupied(&self, coord: [i32; 3]) -> bool {
         if let Some(idx) = Self::idx(coord) {
-            let range = &self.ranges[idx];
-            range.contains(&coord[2])
-        } else {
-            false
+            for range in &self.ranges[idx] {
+                if range.contains(&coord[2]) {
+                    return true;
+                }
+            }
         }
+        false
     }
 
     fn add(&mut self, coord: [i32; 3]) -> bool {
@@ -70,52 +76,51 @@ impl MonotonicVoxel {
 
         let idx = Self::idx(coord).unwrap();
 
-        let r = &mut self.ranges[idx];
-
-        if r.contains(&z) {
-            false
-        } else if Range::is_empty(r) {
-            *r = z..(z + 1);
-            true
-        } else if r.start == z + 1 {
-            *r = z..r.end;
-            true
-        } else if r.end == z {
-            *r = r.start..(z + 1);
-            true
-        } else {
-            panic!("coord={:?}, range={:?}", coord, r);
+        for r in &mut self.ranges[idx] {
+            if r.contains(&z) {
+                return false;
+            } else if r.start == z + 1 {
+                *r = z..r.end;
+                return true;
+            } else if r.end == z {
+                *r = r.start..(z + 1);
+                return true;
+            }
         }
+        self.ranges[idx].push(z..(z + 1));
+        true
     }
 
     fn to_model(&self) -> Model {
         let mut model = Model::default();
 
-        for (idx, range) in self.ranges.iter().enumerate() {
-            if Range::is_empty(range) {
-                continue;
-            }
+        for (idx, ranges) in self.ranges.iter().enumerate() {
+            for range in ranges {
+                if Range::is_empty(range) {
+                    continue;
+                }
 
-            let i = idx / MONOTONIC_VOXEL_SIZE;
-            let j = idx % MONOTONIC_VOXEL_SIZE;
+                let i = idx / MONOTONIC_VOXEL_SIZE;
+                let j = idx % MONOTONIC_VOXEL_SIZE;
 
-            let x = i as i32 - MONOTONIC_VOXEL_SIZE as i32 / 2;
-            let y = j as i32 - MONOTONIC_VOXEL_SIZE as i32 / 2;
+                let x = i as i32 - MONOTONIC_VOXEL_SIZE as i32 / 2;
+                let y = j as i32 - MONOTONIC_VOXEL_SIZE as i32 / 2;
 
-            model.add_face([x, y, range.start], [1, 1, 0]);
-            model.add_face([x, y, range.end], [1, 1, 0]);
+                model.add_face([x, y, range.start], [1, 1, 0]);
+                model.add_face([x, y, range.end], [1, 1, 0]);
 
-            let faces = [
-                ([1, 0], [1, 0, 0], [0, 1, 1]),
-                ([-1, 0], [0, 0, 0], [0, 1, 1]),
-                ([0, 1], [0, 1, 0], [1, 0, 1]),
-                ([0, -1], [0, 0, 0], [1, 0, 1]),
-            ];
+                let faces = [
+                    ([1, 0], [1, 0, 0], [0, 1, 1]),
+                    ([-1, 0], [0, 0, 0], [0, 1, 1]),
+                    ([0, 1], [0, 1, 0], [1, 0, 1]),
+                    ([0, -1], [0, 0, 0], [1, 0, 1]),
+                ];
 
-            for ([dx, dy], offset, dir) in faces {
-                for z in range.clone() {
-                    if !self.occupied([x + dx, y + dy, z]) {
-                        model.add_face([x + offset[0], y + offset[1], z + offset[2]], dir);
+                for ([dx, dy], offset, dir) in faces {
+                    for z in range.clone() {
+                        if !self.occupied([x + dx, y + dy, z]) {
+                            model.add_face([x + offset[0], y + offset[1], z + offset[2]], dir);
+                        }
                     }
                 }
             }
@@ -286,6 +291,96 @@ fn generate_frames_constz() {
     }
 }
 
+impl MonotonicVoxel {
+    fn inject_at(&mut self, zlow: i32, zhigh: i32, pos0: [i32; 3]) {
+        use std::collections::BinaryHeap;
+
+        #[derive(Clone, Copy, Ord, PartialEq, Eq, Debug)]
+        struct HeapItem {
+            dist: usize,
+            depth: usize,
+            pos: [i32; 3],
+        }
+        impl std::cmp::PartialOrd for HeapItem {
+            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+                Some(other.dist.cmp(&self.dist).then(self.pos.cmp(&other.pos)))
+            }
+        }
+
+        let mut candidates = BinaryHeap::new();
+        let mut visited = MonotonicVoxel::new();
+        candidates.push(HeapItem {
+            dist: 0,
+            depth: 100,
+            pos: pos0,
+        });
+
+        while let Some(HeapItem {
+            dist: _dist,
+            depth,
+            pos,
+        }) = candidates.pop()
+        {
+            if depth == 0 {
+                continue;
+            }
+            if visited.occupied(pos) {
+                continue;
+            }
+            visited.add(pos);
+
+            if !self.occupied(pos) {
+                self.add(pos);
+                break;
+            }
+
+            let directions = [
+                [1, 0, 0],
+                [-1, 0, 0],
+                [0, 1, 0],
+                [0, -1, 0],
+                [0, 0, 1],
+                [0, 0, -1],
+            ];
+
+            for dir in directions {
+                let next = [pos[0] + dir[0], pos[1] + dir[1], pos[2] + dir[2]];
+                if next[2] < zlow || next[2] > zhigh {
+                    continue;
+                }
+                if visited.occupied(next) {
+                    continue;
+                }
+
+                let dx = pos0[0] - next[0];
+                let dy = pos0[1] - next[1];
+                let dz = pos0[2] - next[2];
+                let dist = (dx * dx + dy * dy + dz * dz) as usize;
+                candidates.push(HeapItem {
+                    dist,
+                    depth: depth - 1,
+                    pos: next,
+                });
+            }
+        }
+    }
+}
+
+fn generate_inject() {
+    let mut mv = MonotonicVoxel::new();
+
+    // unit: 0.02mm, layer thickness: 0.2mm, nozzle size: 0.4mm
+    // 20mm
+    for x in 0..100 {
+        for _i in 0..200 {
+            mv.inject_at(-5, 5, [x, 0, 0]);
+        }
+    }
+
+    let model = mv.to_model();
+    model.serialize("inject.obj").unwrap();
+}
+
 fn generate_frames() {
     let mut mv = MonotonicVoxel::new();
 
@@ -319,6 +414,8 @@ fn main() {
         generate_frames_constz();
     } else if opt.frames {
         generate_frames();
+    } else if opt.inject {
+        generate_inject();
     } else {
         let model = if opt.bruteforce {
             generate_brute_force()
