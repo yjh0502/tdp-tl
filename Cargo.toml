@@ -8,3 +8,6 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.68"
 argh = "0.1.9"
+indexmap = "1.9.2"
+nalgebra = "0.31.4"
+nom-gcode = "0.1.1"
