@@ -362,8 +362,17 @@ fn generate_inject() {
 
     // unit: 0.02mm, layer thickness: 0.2mm, nozzle size: 0.4mm
     // 20mm
-    for x in 0..100 {
-        mv.inject_at(-5, 5, [x, 0, 0], 200);
+
+    let inject_per_dist = 200;
+    let dist_per_step = 5;
+    let dist = 100;
+    for step in 0..(dist / dist_per_step) {
+        mv.inject_at(
+            -5,
+            5,
+            [step * dist_per_step, 0, 0],
+            (inject_per_dist * dist_per_step) as usize,
+        );
     }
 
     let model = mv.to_model();
