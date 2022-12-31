@@ -491,7 +491,7 @@ fn generate_gcode(filename: &str) {
                 let dir = (dst - pos).normalize();
                 let len = (dst - pos).magnitude();
 
-                let total_blocks = (dst_e - e) * 25000f32;
+                let total_blocks = (dst_e - e) * 29000f32;
                 let mut blocks = total_blocks as usize;
                 let step_size = 0.1;
                 let blocks_per_step = (total_blocks * step_size / len) as usize;
