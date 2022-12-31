@@ -1,8 +1,10 @@
 use anyhow::Result;
 use argh::FromArgs;
+use log::*;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::ops::Range;
+use stopwatch::Stopwatch;
 
 #[derive(FromArgs)]
 /// Reach new heights.
@@ -33,17 +35,13 @@ struct Opt {
 }
 
 // RLE, over Z axis,
+#[derive(Default)]
 struct MonotonicVoxel {
     ranges: BTreeMap<[i32; 2], Vec<Range<i32>>>,
+    count: usize,
 }
 
 impl MonotonicVoxel {
-    fn new() -> Self {
-        Self {
-            ranges: BTreeMap::new(),
-        }
-    }
-
     fn occupied(&self, coord: [i32; 3]) -> bool {
         if let Some(ranges) = self.ranges.get(&[coord[0], coord[1]]) {
             for range in ranges {
@@ -62,6 +60,7 @@ impl MonotonicVoxel {
         match self.ranges.entry([coord[0], coord[1]]) {
             Entry::Vacant(v) => {
                 v.insert(vec![z..z + 1]);
+                self.count += 1;
                 true
             }
             Entry::Occupied(mut v) => {
@@ -71,15 +70,18 @@ impl MonotonicVoxel {
                         return false;
                     } else if r.start == z + 1 {
                         *r = z..r.end;
+                        self.count += 1;
                         return true;
                     } else if r.end == z {
                         *r = r.start..(z + 1);
+                        self.count += 1;
                         return true;
                     }
                 }
 
                 let r = v.get_mut();
                 r.push(z..(z + 1));
+                self.count += 1;
                 true
             }
         }
@@ -250,7 +252,7 @@ fn generate_shell() -> Model {
 }
 
 fn generate_face_only() -> Model {
-    let mut mv = MonotonicVoxel::new();
+    let mut mv = MonotonicVoxel::default();
 
     for z in -SIZE..=SIZE {
         for y in -SIZE..=SIZE {
@@ -265,7 +267,7 @@ fn generate_face_only() -> Model {
 }
 
 fn generate_frames_constz() {
-    let mut mv = MonotonicVoxel::new();
+    let mut mv = MonotonicVoxel::default();
 
     let mut idx = 0;
     for z in -SIZE..=SIZE {
@@ -308,7 +310,7 @@ impl MonotonicVoxel {
         }
 
         let mut candidates = BinaryHeap::new();
-        let mut visited = MonotonicVoxel::new();
+        let mut visited = MonotonicVoxel::default();
         candidates.push(HeapItem {
             dist: 0,
             depth: 100,
@@ -371,7 +373,7 @@ impl MonotonicVoxel {
 }
 
 fn generate_inject() {
-    let mut mv = MonotonicVoxel::new();
+    let mut mv = MonotonicVoxel::default();
 
     // unit: 0.02mm, layer thickness: 0.2mm, nozzle size: 0.4mm
     // 20mm
@@ -393,7 +395,7 @@ fn generate_inject() {
 }
 
 fn generate_frames() {
-    let mut mv = MonotonicVoxel::new();
+    let mut mv = MonotonicVoxel::default();
 
     let mut count: usize = 0;
 
@@ -406,7 +408,7 @@ fn generate_frames() {
 
                     count += 1;
                     if count % 20000 == 0 {
-                        eprintln!("render={:?}", (x, y, z));
+                        info!("render={:?}", (x, y, z));
                         let model = mv.to_model();
                         let filename = format!("constblock/test_{:03}.obj", idx);
                         model.serialize(&filename, 1f32).unwrap();
@@ -426,7 +428,7 @@ fn generate_gcode(filename: &str) {
     // 20mm
     const UNIT: f32 = 0.04f32;
 
-    let mut mv = MonotonicVoxel::new();
+    let mut mv = MonotonicVoxel::default();
 
     let gcode = std::fs::read_to_string(filename).unwrap();
 
@@ -438,11 +440,13 @@ fn generate_gcode(filename: &str) {
         ];
     }
 
+    let sw = Stopwatch::start_new();
+
     let mut pos = Vector3::default();
     let mut e = 0f32;
     for line in gcode.lines() {
         if let (_, Some(GCode(code))) = nom_gcode::parse_gcode(&line).unwrap() {
-            eprintln!("{}", line);
+            debug!("{}", line);
             if code.mnemonic != Mnemonic::General {
                 continue;
             }
@@ -492,7 +496,7 @@ fn generate_gcode(filename: &str) {
                 let step_size = 0.1;
                 let blocks_per_step = (total_blocks * step_size / len) as usize;
 
-                eprintln!(
+                debug!(
                     "{:?} -> {:?}, len={}, e={:?}, blocks={}",
                     pos,
                     dst,
@@ -521,12 +525,25 @@ fn generate_gcode(filename: &str) {
             }
         }
     }
+    info!(
+        "voxel construction: took={}ms, blocks={}, bps={}",
+        sw.elapsed_ms(),
+        mv.count,
+        mv.count * 1000 / sw.elapsed_ms() as usize
+    );
 
+    let sw = Stopwatch::start_new();
     let model = mv.to_model();
+    info!("to_model: took={}ms", sw.elapsed_ms());
+
+    let sw = Stopwatch::start_new();
     model.serialize("gcode.obj", UNIT).unwrap();
+    info!("Model::Serialize: took={}ms", sw.elapsed_ms());
 }
 
 fn main() {
+    env_logger::init();
+
     let opt: Opt = argh::from_env();
 
     if opt.frames_constz {
