@@ -95,18 +95,20 @@ impl Voxel for MonotonicVoxel {
                 let y = coord[1];
 
                 let up = VoxelIdx::from([1, 1, 0]);
+                /*
                 if !self.occupied([x, y, range.start - 1].into()) {
                     model.add_face([x, y, range.start].into(), up);
                 }
+                */
                 if !self.occupied([x, y, range.end].into()) {
                     model.add_face([x, y, range.end].into(), up);
                 }
 
                 let faces = [
                     ([1, 0], [1, 0, 0], [0, 1, 1]),
-                    ([-1, 0], [0, 0, 0], [0, 1, 1]),
+                    // ([-1, 0], [0, 0, 0], [0, 1, 1]),
                     ([0, 1], [0, 1, 0], [1, 0, 1]),
-                    ([0, -1], [0, 0, 0], [1, 0, 1]),
+                    // ([0, -1], [0, 0, 0], [1, 0, 1]),
                 ];
 
                 for ([dx, dy], offset, dir) in faces {
