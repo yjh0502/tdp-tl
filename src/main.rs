@@ -45,17 +45,45 @@ impl std::ops::Index<usize> for VoxelIdx {
     }
 }
 
-// RLE, over Z axis,
-#[derive(Default)]
-struct MonotonicVoxel {
-    ranges: BTreeMap<[i32; 2], Vec<Range<i32>>>,
+#[derive(Default, Debug)]
+struct BoundingBox {
     bound_min: VoxelIdx,
     bound_max: VoxelIdx,
 
     count: usize,
 }
 
-impl MonotonicVoxel {
+impl BoundingBox {
+    fn add(&mut self, coord: VoxelIdx) {
+        // first block
+        if self.count == 0 {
+            self.bound_min = coord;
+            self.bound_max = coord;
+        } else {
+            self.bound_min = coord.bb_min(&self.bound_min);
+            self.bound_max = coord.bb_max(&self.bound_max);
+        }
+        self.count += 1;
+    }
+}
+
+trait Voxel {
+    fn blocks(&self) -> usize;
+    fn ranges(&self) -> usize;
+    fn bounding_box(&self) -> &BoundingBox;
+    fn occupied(&self, coord: VoxelIdx) -> bool;
+    fn add(&mut self, coord: VoxelIdx) -> bool;
+    fn to_model(&self) -> Model;
+}
+
+// RLE, over Z axis,
+#[derive(Default)]
+struct MonotonicVoxel {
+    ranges: BTreeMap<[i32; 2], Vec<Range<i32>>>,
+    bb: BoundingBox,
+}
+
+impl Voxel for MonotonicVoxel {
     fn blocks(&self) -> usize {
         let mut count = 0;
         for ranges in self.ranges.values() {
@@ -73,6 +101,10 @@ impl MonotonicVoxel {
             count += ranges.len();
         }
         count
+    }
+
+    fn bounding_box(&self) -> &BoundingBox {
+        &self.bb
     }
 
     fn occupied(&self, coord: VoxelIdx) -> bool {
@@ -120,16 +152,7 @@ impl MonotonicVoxel {
             }
         };
 
-        // first block
-        if self.count == 0 {
-            self.bound_min = coord;
-            self.bound_max = coord;
-        } else {
-            self.bound_min = coord.bb_min(&self.bound_min);
-            self.bound_max = coord.bb_max(&self.bound_max);
-        }
-        self.count += 1;
-
+        self.bb.add(coord);
         true
     }
 
@@ -576,16 +599,16 @@ fn generate_gcode(filename: &str) {
         }
     }
 
+    let blocks = mv.blocks();
     info!(
-        "voxel construction: took={}ms, blocks={}/{}/{}, bps={}",
+        "voxel construction: took={}ms, blocks={}/{}, bps={}",
         sw.elapsed_ms(),
-        mv.count,
-        mv.blocks(),
+        blocks,
         mv.ranges(),
-        mv.count * 1000 / sw.elapsed_ms() as usize
+        blocks * 1000 / sw.elapsed_ms() as usize
     );
 
-    info!("bounding box: [{:?}, {:?}]", mv.bound_min, mv.bound_max,);
+    info!("bounding box: {:?}", mv.bounding_box());
 
     let sw = Stopwatch::start_new();
     let model = mv.to_model();
