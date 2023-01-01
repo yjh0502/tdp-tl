@@ -492,7 +492,11 @@ fn generate_gcode<V: Voxel + Default>(
                     model
                         .serialize(&out_filename, [-90f32, -90f32, 0f32], UNIT)
                         .unwrap();
-                    info!("Model::Serialize: took={}ms", sw.elapsed_ms());
+                    info!(
+                        "Model::Serialize: took={}ms, filename={}",
+                        sw.elapsed_ms(),
+                        out_filename
+                    );
                 }
             }
             (_, Some(GCode(code))) => {
@@ -598,7 +602,11 @@ fn generate_gcode<V: Voxel + Default>(
         model
             .serialize(&out_filename, [-90f32, -90f32, 0f32], UNIT)
             .unwrap();
-        info!("Model::Serialize: took={}ms", sw.elapsed_ms());
+        info!(
+            "Model::Serialize: took={}ms, filename={}",
+            sw.elapsed_ms(),
+            out_filename
+        );
     }
 }
 
