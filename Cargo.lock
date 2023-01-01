@@ -430,6 +430,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c33a3c44ca05fa6f1807d8e6743f3824e8509beca625669633be0acbdf509dc"
 
 [[package]]
+name = "rangemap"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fa20df61fa7daf0ecf0735b9841ced4a0d25962d1b1eb2dd28dcdd37bb688f2"
+
+[[package]]
 name = "rawpointer"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -535,6 +541,7 @@ dependencies = [
  "nalgebra",
  "nom-gcode",
  "ordslice",
+ "rangemap",
  "stopwatch",
 ]
 

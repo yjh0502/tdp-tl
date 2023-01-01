@@ -144,4 +144,23 @@ mod test {
 
         assert_eq!(idx0.bb_max(&idx1), VoxelIdx::new([4, 3, 3]));
     }
+
+    #[test]
+    pub fn test_map() {
+        let idx3 = VoxelIdx::new([1, 2, 2]);
+        let idx0 = VoxelIdx::new([1, 2, 3]);
+        let idx1 = VoxelIdx::new([1, 2, 4]);
+        let idx2 = VoxelIdx::new([1, 2, 5]);
+
+        let mut m = rangemap::RangeSet::new();
+        m.insert(idx0..idx1);
+        assert_eq!(m.contains(&idx0), true);
+        assert_eq!(m.iter().count(), 1);
+
+        m.insert(idx1..idx2);
+        assert_eq!(m.iter().count(), 1);
+
+        m.insert(idx3..idx0);
+        assert_eq!(m.iter().count(), 1);
+    }
 }

@@ -1,13 +1,17 @@
 use anyhow::Result;
 use argh::FromArgs;
 use log::*;
-use std::collections::BTreeMap;
 use std::fs::File;
-use std::ops::Range;
 use stopwatch::Stopwatch;
 
 mod voxelidx;
 use voxelidx::VoxelIdx;
+
+mod rangesetvoxel;
+use rangesetvoxel::RangeSetVoxel;
+
+mod monotonicvoxel;
+use monotonicvoxel::MonotonicVoxel;
 
 #[derive(FromArgs)]
 /// Reach new heights.
@@ -35,6 +39,14 @@ struct Opt {
     /// gcode
     #[argh(option)]
     gcode_filename: Option<String>,
+
+    /// out
+    #[argh(option)]
+    out_filename: Option<String>,
+
+    /// monotonic
+    #[argh(switch)]
+    monotonic: bool,
 }
 
 impl std::ops::Index<usize> for VoxelIdx {
@@ -46,7 +58,7 @@ impl std::ops::Index<usize> for VoxelIdx {
 }
 
 #[derive(Default, Debug)]
-struct BoundingBox {
+pub struct BoundingBox {
     bound_min: VoxelIdx,
     bound_max: VoxelIdx,
 
@@ -67,7 +79,7 @@ impl BoundingBox {
     }
 }
 
-trait Voxel {
+pub trait Voxel {
     fn blocks(&self) -> usize;
     fn ranges(&self) -> usize;
     fn bounding_box(&self) -> &BoundingBox;
@@ -76,129 +88,8 @@ trait Voxel {
     fn to_model(&self) -> Model;
 }
 
-// RLE, over Z axis,
 #[derive(Default)]
-struct MonotonicVoxel {
-    ranges: BTreeMap<[i32; 2], Vec<Range<i32>>>,
-    bb: BoundingBox,
-}
-
-impl Voxel for MonotonicVoxel {
-    fn blocks(&self) -> usize {
-        let mut count = 0;
-        for ranges in self.ranges.values() {
-            for range in ranges {
-                assert!(range.start < range.end);
-                count += (range.end - range.start) as usize;
-            }
-        }
-        count
-    }
-
-    fn ranges(&self) -> usize {
-        let mut count = 0;
-        for ranges in self.ranges.values() {
-            count += ranges.len();
-        }
-        count
-    }
-
-    fn bounding_box(&self) -> &BoundingBox {
-        &self.bb
-    }
-
-    fn occupied(&self, coord: VoxelIdx) -> bool {
-        if let Some(ranges) = self.ranges.get(&[coord[0], coord[1]]) {
-            for range in ranges {
-                if range.contains(&coord[2]) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    fn add(&mut self, coord: VoxelIdx) -> bool {
-        use ordslice::Ext;
-        let z = coord[2];
-        use std::collections::btree_map::Entry;
-
-        match self.ranges.entry([coord[0], coord[1]]) {
-            Entry::Vacant(v) => {
-                v.insert(vec![z..z + 1]);
-            }
-            Entry::Occupied(mut v) => {
-                let mut updated = false;
-                for r in v.get_mut() {
-                    if r.contains(&z) {
-                        return false;
-                    }
-                    if r.start == z + 1 {
-                        r.start -= 1;
-                        updated = true;
-                        break;
-                    } else if r.end == z {
-                        r.end += 1;
-                        updated = true;
-                        break;
-                    }
-                }
-
-                if !updated {
-                    let r = v.get_mut();
-                    let idx = r.upper_bound_by(|r| z.cmp(&r.start));
-                    r.insert(idx, z..(z + 1));
-                }
-            }
-        };
-
-        self.bb.add(coord);
-        true
-    }
-
-    fn to_model(&self) -> Model {
-        let mut model = Model::default();
-
-        for (coord, ranges) in self.ranges.iter() {
-            for range in ranges {
-                if Range::is_empty(range) {
-                    continue;
-                }
-
-                let x = coord[0];
-                let y = coord[1];
-
-                let up = VoxelIdx::from([1, 1, 0]);
-
-                model.add_face([x, y, range.start].into(), up);
-                model.add_face([x, y, range.end].into(), up);
-
-                let faces = [
-                    ([1, 0], [1, 0, 0], [0, 1, 1]),
-                    ([-1, 0], [0, 0, 0], [0, 1, 1]),
-                    ([0, 1], [0, 1, 0], [1, 0, 1]),
-                    ([0, -1], [0, 0, 0], [1, 0, 1]),
-                ];
-
-                for ([dx, dy], offset, dir) in faces {
-                    for z in range.clone() {
-                        if !self.occupied([x + dx, y + dy, z].into()) {
-                            model.add_face(
-                                [x + offset[0], y + offset[1], z + offset[2]].into(),
-                                dir.into(),
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
-        model
-    }
-}
-
-#[derive(Default)]
-struct Model {
+pub struct Model {
     vertices: indexmap::IndexSet<VoxelIdx>,
     faces: Vec<[usize; 4]>,
 }
@@ -366,80 +257,78 @@ fn generate_frames_constz() {
     }
 }
 
-impl MonotonicVoxel {
-    fn inject_at(&mut self, zlow: i32, zhigh: i32, pos0: VoxelIdx, mut n: usize) {
-        use std::collections::BinaryHeap;
+fn inject_at<V: Voxel>(v: &mut V, zlow: i32, zhigh: i32, pos0: VoxelIdx, mut n: usize) {
+    use std::collections::BinaryHeap;
 
-        if n == 0 {
-            return;
+    if n == 0 {
+        return;
+    }
+
+    #[derive(Clone, Copy, Ord, PartialEq, Eq, Debug)]
+    struct HeapItem {
+        dist: usize,
+        depth: usize,
+        pos: VoxelIdx,
+    }
+    impl std::cmp::PartialOrd for HeapItem {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(other.dist.cmp(&self.dist))
+        }
+    }
+
+    let mut candidates = BinaryHeap::new();
+    let mut visited = MonotonicVoxel::default();
+    candidates.push(HeapItem {
+        dist: 0,
+        depth: 100,
+        pos: pos0,
+    });
+
+    while let Some(HeapItem {
+        dist: _dist,
+        depth,
+        pos,
+    }) = candidates.pop()
+    {
+        if depth == 0 {
+            continue;
+        }
+        if !visited.add(pos) {
+            continue;
         }
 
-        #[derive(Clone, Copy, Ord, PartialEq, Eq, Debug)]
-        struct HeapItem {
-            dist: usize,
-            depth: usize,
-            pos: VoxelIdx,
-        }
-        impl std::cmp::PartialOrd for HeapItem {
-            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                Some(other.dist.cmp(&self.dist))
+        if v.add(pos) {
+            n -= 1;
+            if n == 0 {
+                break;
             }
         }
 
-        let mut candidates = BinaryHeap::new();
-        let mut visited = MonotonicVoxel::default();
-        candidates.push(HeapItem {
-            dist: 0,
-            depth: 100,
-            pos: pos0,
-        });
+        let directions = [
+            [1, 0, 0],
+            [-1, 0, 0],
+            [0, 1, 0],
+            [0, -1, 0],
+            [0, 0, 1],
+            [0, 0, -1],
+        ];
 
-        while let Some(HeapItem {
-            dist: _dist,
-            depth,
-            pos,
-        }) = candidates.pop()
-        {
-            if depth == 0 {
+        for dir in directions {
+            let next: VoxelIdx = pos + dir.into();
+            if next[2] < zlow || next[2] > zhigh {
                 continue;
             }
-            if !visited.add(pos) {
+            if visited.occupied(next) {
                 continue;
             }
 
-            if self.add(pos) {
-                n -= 1;
-                if n == 0 {
-                    break;
-                }
-            }
-
-            let directions = [
-                [1, 0, 0],
-                [-1, 0, 0],
-                [0, 1, 0],
-                [0, -1, 0],
-                [0, 0, 1],
-                [0, 0, -1],
-            ];
-
-            for dir in directions {
-                let next: VoxelIdx = pos + dir.into();
-                if next[2] < zlow || next[2] > zhigh {
-                    continue;
-                }
-                if visited.occupied(next) {
-                    continue;
-                }
-
-                let delta = pos0 - next;
-                let dist = delta.magnitude_squared();
-                candidates.push(HeapItem {
-                    dist,
-                    depth: depth - 1,
-                    pos: next,
-                });
-            }
+            let delta = pos0 - next;
+            let dist = delta.magnitude_squared();
+            candidates.push(HeapItem {
+                dist,
+                depth: depth - 1,
+                pos: next,
+            });
         }
     }
 }
@@ -454,7 +343,8 @@ fn generate_inject() {
     let dist_per_step = 5;
     let dist = 100;
     for step in 0..(dist / dist_per_step) {
-        mv.inject_at(
+        inject_at(
+            &mut mv,
             -5,
             5,
             [step * dist_per_step, 0, 0].into(),
@@ -492,7 +382,7 @@ fn generate_frames() {
     }
 }
 
-fn generate_gcode(filename: &str) {
+fn generate_gcode<V: Voxel + Default>(filename: &str, out_filename: &str) {
     use nalgebra::Vector3;
     use nom_gcode::{GCodeLine::GCode, Mnemonic};
 
@@ -500,7 +390,7 @@ fn generate_gcode(filename: &str) {
     // 20mm
     const UNIT: f32 = 0.04f32;
 
-    let mut mv = MonotonicVoxel::default();
+    let mut mv = V::default();
 
     let gcode = std::fs::read_to_string(filename).unwrap();
 
@@ -583,14 +473,14 @@ fn generate_gcode(filename: &str) {
                     let next = cursor + dir * step_size;
                     let next_pos = to_intpos([next[0], next[1], next[2]]);
                     let z = next_pos[2];
-                    mv.inject_at(z - 20, z, next_pos, blocks_per_step);
+                    inject_at(&mut mv, z - 20, z, next_pos, blocks_per_step);
                     cursor = next;
                     blocks -= blocks_per_step;
                 }
                 {
                     let next_pos = to_intpos([dst[0], dst[1], dst[2]]);
                     let z = next_pos[2];
-                    mv.inject_at(z - 20, z, next_pos, blocks);
+                    inject_at(&mut mv, z - 20, z, next_pos, blocks);
                 }
 
                 pos = dst;
@@ -616,7 +506,7 @@ fn generate_gcode(filename: &str) {
 
     let sw = Stopwatch::start_new();
     model
-        .serialize("gcode.obj", [-90f32, -90f32, 0f32], UNIT)
+        .serialize(&out_filename, [-90f32, -90f32, 0f32], UNIT)
         .unwrap();
     info!("Model::Serialize: took={}ms", sw.elapsed_ms());
 }
@@ -633,7 +523,12 @@ fn main() {
     } else if opt.inject {
         generate_inject();
     } else if let Some(filename) = opt.gcode_filename {
-        generate_gcode(&filename);
+        let out_filename = opt.out_filename.unwrap_or_else(|| "gcode.obj".to_string());
+        if opt.monotonic {
+            generate_gcode::<MonotonicVoxel>(&filename, &out_filename);
+        } else {
+            generate_gcode::<RangeSetVoxel>(&filename, &out_filename);
+        }
     } else {
         let model = if opt.bruteforce {
             generate_brute_force()
