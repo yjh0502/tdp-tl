@@ -49,6 +49,9 @@ impl std::ops::Index<usize> for VoxelIdx {
 #[derive(Default)]
 struct MonotonicVoxel {
     ranges: BTreeMap<[i32; 2], Vec<Range<i32>>>,
+    bound_min: VoxelIdx,
+    bound_max: VoxelIdx,
+
     count: usize,
 }
 
@@ -68,10 +71,9 @@ impl MonotonicVoxel {
         let z = coord[2];
         use std::collections::btree_map::Entry;
 
-        match self.ranges.entry([coord[0], coord[1]]) {
+        let added = match self.ranges.entry([coord[0], coord[1]]) {
             Entry::Vacant(v) => {
                 v.insert(vec![z..z + 1]);
-                self.count += 1;
                 true
             }
             Entry::Occupied(mut v) => {
@@ -81,21 +83,32 @@ impl MonotonicVoxel {
                         return false;
                     } else if r.start == z + 1 {
                         *r = z..r.end;
-                        self.count += 1;
                         return true;
                     } else if r.end == z {
                         *r = r.start..(z + 1);
-                        self.count += 1;
                         return true;
                     }
                 }
 
                 let r = v.get_mut();
                 r.push(z..(z + 1));
-                self.count += 1;
                 true
             }
+        };
+
+        if added {
+            // first block
+            if self.count == 0 {
+                self.bound_min = coord;
+                self.bound_max = coord;
+            } else {
+                self.bound_min = coord.bb_min(&self.bound_min);
+                self.bound_max = coord.bb_max(&self.bound_max);
+            }
+            self.count += 1;
         }
+
+        added
     }
 
     fn to_model(&self) -> Model {
@@ -543,12 +556,15 @@ fn generate_gcode(filename: &str) {
             }
         }
     }
+
     info!(
         "voxel construction: took={}ms, blocks={}, bps={}",
         sw.elapsed_ms(),
         mv.count,
         mv.count * 1000 / sw.elapsed_ms() as usize
     );
+
+    info!("bounding box: [{:?}, {:?}]", mv.bound_min, mv.bound_max,);
 
     let sw = Stopwatch::start_new();
     let model = mv.to_model();

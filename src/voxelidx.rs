@@ -1,6 +1,12 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct VoxelIdx {
     pub idx: [i32; 3],
+}
+
+impl std::fmt::Debug for VoxelIdx {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self.idx)
+    }
 }
 
 impl VoxelIdx {
@@ -48,6 +54,26 @@ impl VoxelIdx {
     pub fn magnitude_squared(&self) -> usize {
         let [x, y, z] = self.idx;
         (x * x + y * y + z * z) as usize
+    }
+
+    pub fn bb_min(&self, other: &Self) -> Self {
+        Self {
+            idx: [
+                self[0].min(other[0]),
+                self[1].min(other[1]),
+                self[2].min(other[2]),
+            ],
+        }
+    }
+
+    pub fn bb_max(&self, other: &Self) -> Self {
+        Self {
+            idx: [
+                self[0].max(other[0]),
+                self[1].max(other[1]),
+                self[2].max(other[2]),
+            ],
+        }
     }
 }
 
@@ -104,5 +130,18 @@ impl std::ops::SubAssign for VoxelIdx {
         self.idx[0] -= rhs.idx[0];
         self.idx[1] -= rhs.idx[1];
         self.idx[2] -= rhs.idx[2];
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    pub fn test_add() {
+        let idx0 = VoxelIdx::new([1, 2, 3]);
+        let idx1 = VoxelIdx::new([4, 3, 1]);
+
+        assert_eq!(idx0.bb_max(idx1), VoxelIdx::new([4, 3, 3]));
     }
 }
