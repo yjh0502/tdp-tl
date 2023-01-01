@@ -187,7 +187,7 @@ impl Model {
         self.add_face(coord, [0, -1, -1].into());
     }
 
-    fn serialize(&self, path: &str, scale: f32) -> Result<()> {
+    fn serialize(&self, path: &str, offset: [f32; 3], scale: f32) -> Result<()> {
         use std::io::Write;
 
         let w = File::create(path)?;
@@ -200,9 +200,9 @@ impl Model {
             write!(
                 &mut w,
                 "v {:.2} {:.2} {:.2}\n",
-                x as f32 * scale,
-                y as f32 * scale,
-                z as f32 * scale
+                x as f32 * scale + offset[0],
+                y as f32 * scale + offset[1],
+                z as f32 * scale + offset[2]
             )?;
         }
         for [i0, i1, i2, i3] in &self.faces {
@@ -303,7 +303,7 @@ fn generate_frames_constz() {
 
         let model = mv.to_model();
         let filename = format!("constz/test_{:03}.obj", idx);
-        model.serialize(&filename, 1f32).unwrap();
+        model.serialize(&filename, [0f32; 3], 1f32).unwrap();
         idx += 1;
     }
 }
@@ -408,7 +408,7 @@ fn generate_inject() {
     }
 
     let model = mv.to_model();
-    model.serialize("inject.obj", 1f32).unwrap();
+    model.serialize("inject.obj", [0f32; 3], 1f32).unwrap();
 }
 
 fn generate_frames() {
@@ -428,7 +428,7 @@ fn generate_frames() {
                         info!("render={:?}", (x, y, z));
                         let model = mv.to_model();
                         let filename = format!("constblock/test_{:03}.obj", idx);
-                        model.serialize(&filename, 1f32).unwrap();
+                        model.serialize(&filename, [0f32; 3], 1f32).unwrap();
                         idx += 1;
                     }
                 }
@@ -555,7 +555,9 @@ fn generate_gcode(filename: &str) {
     info!("to_model: took={}ms", sw.elapsed_ms());
 
     let sw = Stopwatch::start_new();
-    model.serialize("gcode.obj", UNIT).unwrap();
+    model
+        .serialize("gcode.obj", [-90f32, -90f32, 0f32], UNIT)
+        .unwrap();
     info!("Model::Serialize: took={}ms", sw.elapsed_ms());
 }
 
@@ -581,6 +583,6 @@ fn main() {
             generate_face_only()
         };
 
-        model.serialize("test.obj", 1f32).unwrap();
+        model.serialize("test.obj", [0f32; 3], 1f32).unwrap();
     }
 }
