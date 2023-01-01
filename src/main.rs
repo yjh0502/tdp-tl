@@ -6,6 +6,9 @@ use std::fs::File;
 use std::ops::Range;
 use stopwatch::Stopwatch;
 
+mod voxelidx;
+use voxelidx::VoxelIdx;
+
 #[derive(FromArgs)]
 /// Reach new heights.
 struct Opt {
@@ -34,6 +37,14 @@ struct Opt {
     gcode_filename: Option<String>,
 }
 
+impl std::ops::Index<usize> for VoxelIdx {
+    type Output = i32;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.idx[index]
+    }
+}
+
 // RLE, over Z axis,
 #[derive(Default)]
 struct MonotonicVoxel {
@@ -42,7 +53,7 @@ struct MonotonicVoxel {
 }
 
 impl MonotonicVoxel {
-    fn occupied(&self, coord: [i32; 3]) -> bool {
+    fn occupied(&self, coord: VoxelIdx) -> bool {
         if let Some(ranges) = self.ranges.get(&[coord[0], coord[1]]) {
             for range in ranges {
                 if range.contains(&coord[2]) {
@@ -53,7 +64,7 @@ impl MonotonicVoxel {
         false
     }
 
-    fn add(&mut self, coord: [i32; 3]) -> bool {
+    fn add(&mut self, coord: VoxelIdx) -> bool {
         let z = coord[2];
         use std::collections::btree_map::Entry;
 
@@ -99,8 +110,10 @@ impl MonotonicVoxel {
                 let x = coord[0];
                 let y = coord[1];
 
-                model.add_face([x, y, range.start], [1, 1, 0]);
-                model.add_face([x, y, range.end], [1, 1, 0]);
+                let up = VoxelIdx::from([1, 1, 0]);
+
+                model.add_face([x, y, range.start].into(), up);
+                model.add_face([x, y, range.end].into(), up);
 
                 let faces = [
                     ([1, 0], [1, 0, 0], [0, 1, 1]),
@@ -111,8 +124,11 @@ impl MonotonicVoxel {
 
                 for ([dx, dy], offset, dir) in faces {
                     for z in range.clone() {
-                        if !self.occupied([x + dx, y + dy, z]) {
-                            model.add_face([x + offset[0], y + offset[1], z + offset[2]], dir);
+                        if !self.occupied([x + dx, y + dy, z].into()) {
+                            model.add_face(
+                                [x + offset[0], y + offset[1], z + offset[2]].into(),
+                                dir.into(),
+                            );
                         }
                     }
                 }
@@ -125,50 +141,50 @@ impl MonotonicVoxel {
 
 #[derive(Default)]
 struct Model {
-    vertices: indexmap::IndexSet<[i32; 3]>,
+    vertices: indexmap::IndexSet<VoxelIdx>,
     faces: Vec<[usize; 4]>,
 }
 
 impl Model {
-    fn add_vert(&mut self, coord: [i32; 3]) -> usize {
+    fn add_vert(&mut self, coord: VoxelIdx) -> usize {
         let (idx, _) = self.vertices.insert_full(coord);
         idx
     }
 
-    fn add_face(&mut self, coord: [i32; 3], dir: [i32; 3]) {
+    fn add_face(&mut self, coord: VoxelIdx, dir: VoxelIdx) {
         let (i0, i1, i2, i3) = if dir[0] == 0 {
-            let i0 = self.add_vert([coord[0], coord[1], coord[2]]);
-            let i1 = self.add_vert([coord[0], coord[1] + dir[1], coord[2]]);
-            let i2 = self.add_vert([coord[0], coord[1] + dir[1], coord[2] + dir[2]]);
-            let i3 = self.add_vert([coord[0], coord[1], coord[2] + dir[2]]);
+            let i0 = self.add_vert(coord);
+            let i1 = self.add_vert(coord + dir.y());
+            let i2 = self.add_vert(coord + dir.yz());
+            let i3 = self.add_vert(coord + dir.z());
             (i0, i1, i2, i3)
         } else if dir[1] == 0 {
-            let i0 = self.add_vert([coord[0], coord[1], coord[2]]);
-            let i1 = self.add_vert([coord[0] + dir[0], coord[1], coord[2]]);
-            let i2 = self.add_vert([coord[0] + dir[0], coord[1], coord[2] + dir[2]]);
-            let i3 = self.add_vert([coord[0], coord[1], coord[2] + dir[2]]);
+            let i0 = self.add_vert(coord);
+            let i1 = self.add_vert(coord + dir.x());
+            let i2 = self.add_vert(coord + dir.xz());
+            let i3 = self.add_vert(coord + dir.z());
             (i0, i1, i2, i3)
         } else {
-            let i0 = self.add_vert([coord[0], coord[1], coord[2]]);
-            let i1 = self.add_vert([coord[0] + dir[0], coord[1], coord[2]]);
-            let i2 = self.add_vert([coord[0] + dir[0], coord[1] + dir[1], coord[2]]);
-            let i3 = self.add_vert([coord[0], coord[1] + dir[1], coord[2]]);
+            let i0 = self.add_vert(coord);
+            let i1 = self.add_vert(coord + dir.x());
+            let i2 = self.add_vert(coord + dir.xy());
+            let i3 = self.add_vert(coord + dir.y());
             (i0, i1, i2, i3)
         };
 
         self.faces.push([i0, i1, i2, i3]);
     }
 
-    fn add_cube(&mut self, coord: [i32; 3]) {
-        self.add_face(coord, [1, 1, 0]);
-        self.add_face(coord, [1, 0, 1]);
-        self.add_face(coord, [0, 1, 1]);
+    fn add_cube(&mut self, coord: VoxelIdx) {
+        self.add_face(coord, [1, 1, 0].into());
+        self.add_face(coord, [1, 0, 1].into());
+        self.add_face(coord, [0, 1, 1].into());
 
-        let coord = [coord[0] + 1, coord[1] + 1, coord[2] + 1];
+        let coord = coord + VoxelIdx::unit();
 
-        self.add_face(coord, [-1, -1, 0]);
-        self.add_face(coord, [-1, 0, -1]);
-        self.add_face(coord, [0, -1, -1]);
+        self.add_face(coord, [-1, -1, 0].into());
+        self.add_face(coord, [-1, 0, -1].into());
+        self.add_face(coord, [0, -1, -1].into());
     }
 
     fn serialize(&self, path: &str, scale: f32) -> Result<()> {
@@ -177,13 +193,16 @@ impl Model {
         let w = File::create(path)?;
         let mut w = std::io::BufWriter::new(w);
 
-        for [x, y, z] in &self.vertices {
+        for idx in &self.vertices {
+            let x = idx[0];
+            let y = idx[1];
+            let z = idx[2];
             write!(
                 &mut w,
                 "v {:.2} {:.2} {:.2}\n",
-                *x as f32 * scale,
-                *y as f32 * scale,
-                *z as f32 * scale
+                x as f32 * scale,
+                y as f32 * scale,
+                z as f32 * scale
             )?;
         }
         for [i0, i1, i2, i3] in &self.faces {
@@ -206,7 +225,7 @@ fn generate_brute_force() -> Model {
         for y in -SIZE..=SIZE {
             for x in -SIZE..=SIZE {
                 if test(x, y, z) {
-                    m.add_cube([x, y, z]);
+                    m.add_cube([x, y, z].into());
                 }
             }
         }
@@ -242,7 +261,7 @@ fn generate_shell() -> Model {
         for y in -SIZE..=SIZE {
             for x in -SIZE..=SIZE {
                 if emit(x, y, z) {
-                    m.add_cube([x, y, z]);
+                    m.add_cube([x, y, z].into());
                 }
             }
         }
@@ -258,7 +277,7 @@ fn generate_face_only() -> Model {
         for y in -SIZE..=SIZE {
             for x in -SIZE..=SIZE {
                 if test(x, y, z) {
-                    mv.add([x, y, z]);
+                    mv.add([x, y, z].into());
                 }
             }
         }
@@ -274,7 +293,7 @@ fn generate_frames_constz() {
         for y in -SIZE..=SIZE {
             for x in -SIZE..=SIZE {
                 if test(x, y, z) {
-                    mv.add([x, y, z]);
+                    mv.add([x, y, z].into());
                 }
             }
         }
@@ -290,7 +309,7 @@ fn generate_frames_constz() {
 }
 
 impl MonotonicVoxel {
-    fn inject_at(&mut self, zlow: i32, zhigh: i32, pos0: [i32; 3], mut n: usize) {
+    fn inject_at(&mut self, zlow: i32, zhigh: i32, pos0: VoxelIdx, mut n: usize) {
         use std::collections::BinaryHeap;
 
         if n == 0 {
@@ -301,7 +320,7 @@ impl MonotonicVoxel {
         struct HeapItem {
             dist: usize,
             depth: usize,
-            pos: [i32; 3],
+            pos: VoxelIdx,
         }
         impl std::cmp::PartialOrd for HeapItem {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -350,7 +369,7 @@ impl MonotonicVoxel {
             ];
 
             for dir in directions {
-                let next = [pos[0] + dir[0], pos[1] + dir[1], pos[2] + dir[2]];
+                let next: VoxelIdx = pos + dir.into();
                 if next[2] < zlow || next[2] > zhigh {
                     continue;
                 }
@@ -358,10 +377,8 @@ impl MonotonicVoxel {
                     continue;
                 }
 
-                let dx = pos0[0] - next[0];
-                let dy = pos0[1] - next[1];
-                let dz = pos0[2] - next[2];
-                let dist = (dx * dx + dy * dy + dz * dz) as usize;
+                let delta = pos0 - next;
+                let dist = delta.magnitude_squared();
                 candidates.push(HeapItem {
                     dist,
                     depth: depth - 1,
@@ -385,7 +402,7 @@ fn generate_inject() {
         mv.inject_at(
             -5,
             5,
-            [step * dist_per_step, 0, 0],
+            [step * dist_per_step, 0, 0].into(),
             (inject_per_dist * dist_per_step) as usize,
         );
     }
@@ -404,7 +421,7 @@ fn generate_frames() {
         for y in -SIZE..=SIZE {
             for x in -SIZE..=SIZE {
                 if test(x, y, z) {
-                    mv.add([x, y, z]);
+                    mv.add([x, y, z].into());
 
                     count += 1;
                     if count % 20000 == 0 {
@@ -432,12 +449,13 @@ fn generate_gcode(filename: &str) {
 
     let gcode = std::fs::read_to_string(filename).unwrap();
 
-    fn to_intpos(pos: [f32; 3]) -> [i32; 3] {
+    fn to_intpos(pos: [f32; 3]) -> VoxelIdx {
         return [
             (pos[0] / UNIT).round() as i32,
             (pos[1] / UNIT).round() as i32,
             (pos[2] / UNIT).round() as i32,
-        ];
+        ]
+        .into();
     }
 
     let sw = Stopwatch::start_new();
