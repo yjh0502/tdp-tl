@@ -67,48 +67,64 @@ impl MonotonicVoxel {
         false
     }
 
+    fn blocks(&self) -> usize {
+        let mut count = 0;
+        for ranges in self.ranges.values() {
+            for range in ranges {
+                assert!(range.start < range.end);
+                count += (range.end - range.start) as usize;
+            }
+        }
+        count
+    }
+
     fn add(&mut self, coord: VoxelIdx) -> bool {
         let z = coord[2];
         use std::collections::btree_map::Entry;
 
-        let added = match self.ranges.entry([coord[0], coord[1]]) {
+        match self.ranges.entry([coord[0], coord[1]]) {
             Entry::Vacant(v) => {
                 v.insert(vec![z..z + 1]);
-                true
             }
             Entry::Occupied(mut v) => {
-                let r = v.get_mut();
-                for r in r {
+                for r in v.get() {
                     if r.contains(&z) {
                         return false;
-                    } else if r.start == z + 1 {
-                        *r = z..r.end;
-                        return true;
-                    } else if r.end == z {
-                        *r = r.start..(z + 1);
-                        return true;
                     }
                 }
 
                 let r = v.get_mut();
-                r.push(z..(z + 1));
-                true
+                let mut updated = false;
+                for r in r {
+                    if r.start == z + 1 {
+                        r.start -= 1;
+                        updated = true;
+                        break;
+                    } else if r.end == z {
+                        r.end += 1;
+                        updated = true;
+                        break;
+                    }
+                }
+
+                if !updated {
+                    let r = v.get_mut();
+                    r.push(z..(z + 1));
+                }
             }
         };
 
-        if added {
-            // first block
-            if self.count == 0 {
-                self.bound_min = coord;
-                self.bound_max = coord;
-            } else {
-                self.bound_min = coord.bb_min(&self.bound_min);
-                self.bound_max = coord.bb_max(&self.bound_max);
-            }
-            self.count += 1;
+        // first block
+        if self.count == 0 {
+            self.bound_min = coord;
+            self.bound_max = coord;
+        } else {
+            self.bound_min = coord.bb_min(&self.bound_min);
+            self.bound_max = coord.bb_max(&self.bound_max);
         }
+        self.count += 1;
 
-        added
+        true
     }
 
     fn to_model(&self) -> Model {
@@ -358,14 +374,11 @@ impl MonotonicVoxel {
             if depth == 0 {
                 continue;
             }
-            if visited.occupied(pos) {
+            if !visited.add(pos) {
                 continue;
             }
-            visited.add(pos);
 
-            if !self.occupied(pos) {
-                self.add(pos);
-
+            if self.add(pos) {
                 n -= 1;
                 if n == 0 {
                     break;
@@ -558,9 +571,10 @@ fn generate_gcode(filename: &str) {
     }
 
     info!(
-        "voxel construction: took={}ms, blocks={}, bps={}",
+        "voxel construction: took={}ms, blocks={}/{}, bps={}",
         sw.elapsed_ms(),
         mv.count,
+        mv.blocks(),
         mv.count * 1000 / sw.elapsed_ms() as usize
     );
 
