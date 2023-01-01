@@ -288,7 +288,7 @@ fn generate_face_only() -> Model {
     mv.to_model()
 }
 
-fn generate_frames_constz(outdir: &String) {
+fn generate_frames_constz(outdir: &String) -> Result<()> {
     let mut mv = MonotonicVoxel::default();
 
     let mut idx = 0;
@@ -306,9 +306,10 @@ fn generate_frames_constz(outdir: &String) {
 
         let model = mv.to_model();
         let filename = format!("{}/out_{:03}.obj", outdir, idx);
-        model.serialize(&filename, [0f32; 3], 1f32).unwrap();
+        model.serialize(&filename, [0f32; 3], 1f32)?;
         idx += 1;
     }
+    Ok(())
 }
 
 fn inject_at<V: Voxel>(v: &mut V, zlow: i32, zhigh: i32, pos0: VoxelIdx, mut n: usize) {
@@ -387,7 +388,7 @@ fn inject_at<V: Voxel>(v: &mut V, zlow: i32, zhigh: i32, pos0: VoxelIdx, mut n: 
     }
 }
 
-fn generate_inject(out: &str) {
+fn generate_inject(out: &str) -> Result<()> {
     let mut mv = MonotonicVoxel::default();
 
     // unit: 0.02mm, layer thickness: 0.2mm, nozzle size: 0.4mm
@@ -407,10 +408,10 @@ fn generate_inject(out: &str) {
     }
 
     let model = mv.to_model();
-    model.serialize(out, [0f32; 3], 1f32).unwrap();
+    model.serialize(out, [0f32; 3], 1f32)
 }
 
-fn generate_frames(outdir: &str) {
+fn generate_frames(outdir: &str) -> Result<()> {
     let mut mv = MonotonicVoxel::default();
 
     let mut count: usize = 0;
@@ -427,13 +428,14 @@ fn generate_frames(outdir: &str) {
                         info!("render={:?}", (x, y, z));
                         let model = mv.to_model();
                         let filename = format!("{}/out_{:03}.obj", outdir, idx);
-                        model.serialize(&filename, [0f32; 3], 1f32).unwrap();
+                        model.serialize(&filename, [0f32; 3], 1f32)?;
                         idx += 1;
                     }
                 }
             }
         }
     }
+    Ok(())
 }
 
 fn generate_gcode<V: Voxel + Default>(
@@ -441,7 +443,7 @@ fn generate_gcode<V: Voxel + Default>(
     out_filename: &str,
     layer: usize,
     out_layers: bool,
-) {
+) -> Result<()> {
     use nalgebra::Vector3;
     use nom_gcode::{GCodeLine::*, Mnemonic};
 
@@ -451,7 +453,7 @@ fn generate_gcode<V: Voxel + Default>(
 
     let mut mv = V::default();
 
-    let gcode = std::fs::read_to_string(filename).unwrap();
+    let gcode = std::fs::read_to_string(filename)?;
 
     fn to_intpos(pos: [f32; 3]) -> VoxelIdx {
         return [
@@ -467,13 +469,13 @@ fn generate_gcode<V: Voxel + Default>(
     let mut pos = Vector3::default();
     let mut e = 0f32;
     for line in gcode.lines() {
-        match nom_gcode::parse_gcode(&line).unwrap() {
+        match nom_gcode::parse_gcode(&line)? {
             (_, Some(Comment(comment))) => {
                 let prefix = "LAYER:";
                 if !comment.0.starts_with(prefix) {
                     continue;
                 }
-                let layer_idx = comment.0[prefix.len()..].parse::<usize>().unwrap();
+                let layer_idx = comment.0[prefix.len()..].parse::<usize>()?;
                 if layer_idx == 0 {
                     continue;
                 }
@@ -489,9 +491,7 @@ fn generate_gcode<V: Voxel + Default>(
 
                     let sw = Stopwatch::start_new();
                     let out_filename = format!("{}/gcode_{:03}.obj", out_filename, layer_idx);
-                    model
-                        .serialize(&out_filename, [-90f32, -90f32, 0f32], UNIT)
-                        .unwrap();
+                    model.serialize(&out_filename, [-90f32, -90f32, 0f32], UNIT)?;
                     info!(
                         "Model::Serialize: took={}ms, filename={}",
                         sw.elapsed_ms(),
@@ -507,7 +507,11 @@ fn generate_gcode<V: Voxel + Default>(
                 if code.major == 0 {
                     for (letter, value) in code.arguments() {
                         let letter = *letter;
-                        let v = value.unwrap();
+                        let v = match value {
+                            Some(v) => *v,
+                            None => continue,
+                        };
+
                         if letter == 'X' {
                             pos[0] = v;
                         }
@@ -523,7 +527,11 @@ fn generate_gcode<V: Voxel + Default>(
                     let mut dst_e = e;
                     for (letter, value) in code.arguments() {
                         let letter = *letter;
-                        let v = value.unwrap();
+                        let v = match value {
+                            Some(v) => *v,
+                            None => continue,
+                        };
+
                         if letter == 'X' {
                             dst[0] = v;
                         }
@@ -608,9 +616,11 @@ fn generate_gcode<V: Voxel + Default>(
             out_filename
         );
     }
+
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<()> {
     env_logger::init();
 
     let opt: TopLevel = argh::from_env();
@@ -618,9 +628,9 @@ fn main() {
     match opt.nested {
         SubCommandEnum::DemoSphereFrames(opt) => {
             if opt.constz {
-                generate_frames_constz(&opt.outdir);
+                generate_frames_constz(&opt.outdir)
             } else {
-                generate_frames(&opt.outdir);
+                generate_frames(&opt.outdir)
             }
         }
 
@@ -633,24 +643,23 @@ fn main() {
                 generate_face_only()
             };
 
-            model.serialize(&opt.out, [0f32; 3], 1f32).unwrap();
+            model.serialize(&opt.out, [0f32; 3], 1f32)?;
+            Ok(())
         }
 
-        SubCommandEnum::DemoInject(opt) => {
-            generate_inject(&opt.out);
-        }
+        SubCommandEnum::DemoInject(opt) => generate_inject(&opt.out),
 
         SubCommandEnum::Gcode(opt) => {
             let layer = opt.layer.unwrap_or(std::usize::MAX);
-            generate_gcode::<MonotonicVoxel>(&opt.gcode, &opt.out, layer, false);
+            generate_gcode::<MonotonicVoxel>(&opt.gcode, &opt.out, layer, false)
         }
 
         SubCommandEnum::GcodeLayers(opt) => {
             let layer = std::usize::MAX;
             if opt.rangeset {
-                generate_gcode::<RangeSetVoxel>(&opt.gcode, &opt.outdir, layer, true);
+                generate_gcode::<RangeSetVoxel>(&opt.gcode, &opt.outdir, layer, true)
             } else {
-                generate_gcode::<MonotonicVoxel>(&opt.gcode, &opt.outdir, layer, true);
+                generate_gcode::<MonotonicVoxel>(&opt.gcode, &opt.outdir, layer, true)
             }
         }
     }
