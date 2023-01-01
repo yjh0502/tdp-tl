@@ -133,6 +133,10 @@ impl BoundingBox {
     }
 }
 
+// unit: 0.04mm, layer thickness: 0.2mm, nozzle size: 0.4mm
+// 20mm
+const UNIT: f32 = 0.04f32;
+
 pub trait Voxel {
     fn blocks(&self) -> usize;
     fn ranges(&self) -> usize;
@@ -312,12 +316,14 @@ fn generate_frames_constz(outdir: &String) -> Result<()> {
     Ok(())
 }
 
-fn inject_at<V: Voxel>(v: &mut V, zlow: i32, zhigh: i32, pos0: VoxelIdx, mut n: usize) {
+fn inject_at<V: Voxel>(v: &mut V, zlow: i32, zhigh: i32, pos0: VoxelIdx, n: usize) -> usize {
     use std::collections::BinaryHeap;
 
     if n == 0 {
-        return;
+        return 0;
     }
+
+    let mut injected = 0;
 
     #[derive(Clone, Copy, Ord, PartialEq, Eq, Debug)]
     struct HeapItem {
@@ -331,11 +337,13 @@ fn inject_at<V: Voxel>(v: &mut V, zlow: i32, zhigh: i32, pos0: VoxelIdx, mut n: 
         }
     }
 
+    // with unit = 0.04mm and nozzle diameter 0.4mm, limiting maximum depth to 15
+
     let mut candidates = BinaryHeap::new();
     let mut visited = MonotonicVoxel::default();
     candidates.push(HeapItem {
         dist: 0,
-        depth: 100,
+        depth: 10,
         pos: pos0,
     });
 
@@ -353,8 +361,8 @@ fn inject_at<V: Voxel>(v: &mut V, zlow: i32, zhigh: i32, pos0: VoxelIdx, mut n: 
         }
 
         if v.add(pos) {
-            n -= 1;
-            if n == 0 {
+            injected += 1;
+            if n == injected {
                 break;
             }
         }
@@ -386,6 +394,8 @@ fn inject_at<V: Voxel>(v: &mut V, zlow: i32, zhigh: i32, pos0: VoxelIdx, mut n: 
             });
         }
     }
+
+    injected
 }
 
 fn generate_inject(out: &str) -> Result<()> {
@@ -447,11 +457,12 @@ fn generate_gcode<V: Voxel + Default>(
     use nalgebra::Vector3;
     use nom_gcode::{GCodeLine::*, Mnemonic};
 
-    // unit: 0.02mm, layer thickness: 0.2mm, nozzle size: 0.4mm
-    // 20mm
-    const UNIT: f32 = 0.04f32;
-
     let mut mv = V::default();
+
+    // unit: millimeters
+    // TODO: extract from gcode
+    const LAYER_HEIGHT: f32 = 0.2f32;
+    const Z_OFFSET: i32 = (LAYER_HEIGHT / UNIT) as i32;
 
     let gcode = std::fs::read_to_string(filename)?;
 
@@ -468,8 +479,15 @@ fn generate_gcode<V: Voxel + Default>(
 
     let mut pos = Vector3::default();
     let mut e = 0f32;
+
+    let mut parsed = Vec::new();
     for line in gcode.lines() {
-        match nom_gcode::parse_gcode(&line)? {
+        let item = nom_gcode::parse_gcode(&line)?;
+        parsed.push(item);
+    }
+
+    for item in parsed {
+        match item {
             (_, Some(Comment(comment))) => {
                 let prefix = "LAYER:";
                 if !comment.0.starts_with(prefix) {
@@ -500,7 +518,6 @@ fn generate_gcode<V: Voxel + Default>(
                 }
             }
             (_, Some(GCode(code))) => {
-                debug!("{}", line);
                 if code.mnemonic != Mnemonic::General {
                     continue;
                 }
@@ -553,7 +570,21 @@ fn generate_gcode<V: Voxel + Default>(
                     let dir = (dst - pos).normalize();
                     let len = (dst - pos).magnitude();
 
-                    let total_blocks = (dst_e - e) * 29000f32;
+                    // in centimeters
+                    let delta_e = dst_e - e;
+
+                    // flow rate calculation
+                    // block volume in cubic millimeters
+                    let block_volume = UNIT * UNIT * UNIT;
+
+                    // with 1.75mm filament, calculate volume, in millimeters
+                    let filament_diameter = 1.75f32;
+                    let filament_cross_section =
+                        0.25f32 * std::f32::consts::PI * filament_diameter * filament_diameter;
+                    let filament_volume = delta_e * filament_cross_section;
+
+                    // TODO: accurate volume calculation
+                    let total_blocks = filament_volume / block_volume;
                     let mut blocks = total_blocks as usize;
                     let step_size = 0.1;
                     let blocks_per_step = (total_blocks * step_size / len) as usize;
@@ -572,14 +603,21 @@ fn generate_gcode<V: Voxel + Default>(
                         let next = cursor + dir * step_size;
                         let next_pos = to_intpos([next[0], next[1], next[2]]);
                         let z = next_pos[2];
-                        inject_at(&mut mv, z - 20, z, next_pos, blocks_per_step);
+                        let injected =
+                            inject_at(&mut mv, z - Z_OFFSET, z, next_pos, blocks_per_step);
+                        if injected != blocks_per_step {
+                            debug!("injected != blocks_per_step, skipping");
+                        }
                         cursor = next;
                         blocks -= blocks_per_step;
                     }
                     {
                         let next_pos = to_intpos([dst[0], dst[1], dst[2]]);
                         let z = next_pos[2];
-                        inject_at(&mut mv, z - 20, z, next_pos, blocks);
+                        let injected = inject_at(&mut mv, z - Z_OFFSET, z, next_pos, blocks);
+                        if injected != blocks {
+                            debug!("injected != blocks_per_step, skipping");
+                        }
                     }
 
                     pos = dst;
