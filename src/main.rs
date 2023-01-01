@@ -56,17 +56,6 @@ struct MonotonicVoxel {
 }
 
 impl MonotonicVoxel {
-    fn occupied(&self, coord: VoxelIdx) -> bool {
-        if let Some(ranges) = self.ranges.get(&[coord[0], coord[1]]) {
-            for range in ranges {
-                if range.contains(&coord[2]) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     fn blocks(&self) -> usize {
         let mut count = 0;
         for ranges in self.ranges.values() {
@@ -78,7 +67,19 @@ impl MonotonicVoxel {
         count
     }
 
+    fn occupied(&self, coord: VoxelIdx) -> bool {
+        if let Some(ranges) = self.ranges.get(&[coord[0], coord[1]]) {
+            for range in ranges {
+                if range.contains(&coord[2]) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn add(&mut self, coord: VoxelIdx) -> bool {
+        use ordslice::Ext;
         let z = coord[2];
         use std::collections::btree_map::Entry;
 
@@ -87,15 +88,11 @@ impl MonotonicVoxel {
                 v.insert(vec![z..z + 1]);
             }
             Entry::Occupied(mut v) => {
-                for r in v.get() {
+                let mut updated = false;
+                for r in v.get_mut() {
                     if r.contains(&z) {
                         return false;
                     }
-                }
-
-                let r = v.get_mut();
-                let mut updated = false;
-                for r in r {
                     if r.start == z + 1 {
                         r.start -= 1;
                         updated = true;
@@ -109,7 +106,8 @@ impl MonotonicVoxel {
 
                 if !updated {
                     let r = v.get_mut();
-                    r.push(z..(z + 1));
+                    let idx = r.upper_bound_by(|r| z.cmp(&r.start));
+                    r.insert(idx, z..(z + 1));
                 }
             }
         };

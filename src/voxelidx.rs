@@ -142,6 +142,6 @@ mod test {
         let idx0 = VoxelIdx::new([1, 2, 3]);
         let idx1 = VoxelIdx::new([4, 3, 1]);
 
-        assert_eq!(idx0.bb_max(idx1), VoxelIdx::new([4, 3, 3]));
+        assert_eq!(idx0.bb_max(&idx1), VoxelIdx::new([4, 3, 3]));
     }
 }

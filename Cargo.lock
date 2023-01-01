@@ -372,6 +372,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ordslice"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd20eec3dbe4376829cb7d80ae6ac45e0a766831dca50202ff2d40db46a8a024"
+
+[[package]]
 name = "paste"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -528,6 +534,7 @@ dependencies = [
  "log",
  "nalgebra",
  "nom-gcode",
+ "ordslice",
  "stopwatch",
 ]
 
