@@ -607,9 +607,7 @@ fn generate_gcode<V: Voxel + Default>(
         info!("to_model: took={}ms", sw.elapsed_ms());
 
         let sw = Stopwatch::start_new();
-        model
-            .serialize(&out_filename, [-90f32, -90f32, 0f32], UNIT)
-            .unwrap();
+        model.serialize(&out_filename, [-90f32, -90f32, 0f32], UNIT)?;
         info!(
             "Model::Serialize: took={}ms, filename={}",
             sw.elapsed_ms(),
