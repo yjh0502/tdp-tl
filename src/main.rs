@@ -67,6 +67,14 @@ impl MonotonicVoxel {
         count
     }
 
+    fn ranges(&self) -> usize {
+        let mut count = 0;
+        for ranges in self.ranges.values() {
+            count += ranges.len();
+        }
+        count
+    }
+
     fn occupied(&self, coord: VoxelIdx) -> bool {
         if let Some(ranges) = self.ranges.get(&[coord[0], coord[1]]) {
             for range in ranges {
@@ -569,10 +577,11 @@ fn generate_gcode(filename: &str) {
     }
 
     info!(
-        "voxel construction: took={}ms, blocks={}/{}, bps={}",
+        "voxel construction: took={}ms, blocks={}/{}/{}, bps={}",
         sw.elapsed_ms(),
         mv.count,
         mv.blocks(),
+        mv.ranges(),
         mv.count * 1000 / sw.elapsed_ms() as usize
     );
 
