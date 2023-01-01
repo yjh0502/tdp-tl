@@ -14,39 +14,89 @@ mod monotonicvoxel;
 use monotonicvoxel::MonotonicVoxel;
 
 #[derive(FromArgs)]
-/// Reach new heights.
-struct Opt {
-    /// frames
-    #[argh(switch)]
-    frames: bool,
+/// toplevel
+struct TopLevel {
+    #[argh(subcommand)]
+    nested: SubCommandEnum,
+}
 
-    /// frames
-    #[argh(switch)]
-    frames_constz: bool,
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand)]
+enum SubCommandEnum {
+    DemoSphereFrames(DemoSphereFrames),
+    DemoSphere(DemoSphere),
+    DemoInject(DemoInject),
+    Gcode(SubCommandGcode),
+    GcodeLayers(SubCommandGcodeLayers),
+}
 
+#[derive(FromArgs, PartialEq, Debug)]
+/// sphere frames
+#[argh(subcommand, name = "demo-sphere-frames")]
+struct DemoSphereFrames {
+    /// const-z mode
+    #[argh(option)]
+    constz: bool,
+
+    /// output directory
+    #[argh(option)]
+    outdir: String,
+}
+
+#[derive(FromArgs, PartialEq, Debug)]
+/// sphere frames
+#[argh(subcommand, name = "demo-sphere")]
+struct DemoSphere {
     /// bruteforce
-    #[argh(switch)]
+    #[argh(option)]
     bruteforce: bool,
 
-    /// bruteforce
-    #[argh(switch)]
+    /// shell-only
+    #[argh(option)]
     shell: bool,
 
-    /// inject
-    #[argh(switch)]
-    inject: bool,
-
-    /// gcode
+    /// output filename
     #[argh(option)]
-    gcode_filename: Option<String>,
+    out: String,
+}
 
-    /// out
+#[derive(FromArgs, PartialEq, Debug)]
+/// demo: inject
+#[argh(subcommand, name = "demo-inject")]
+struct DemoInject {
+    /// output filename
     #[argh(option)]
-    out_filename: Option<String>,
+    out: String,
+}
 
-    /// monotonic
+#[derive(FromArgs, PartialEq, Debug)]
+/// gcode to obj
+#[argh(subcommand, name = "gcode")]
+struct SubCommandGcode {
+    /// input filename
+    #[argh(option)]
+    filename: String,
+
+    /// output filename
+    #[argh(option)]
+    out: String,
+}
+
+#[derive(FromArgs, PartialEq, Debug)]
+/// gcode layers to obj
+#[argh(subcommand, name = "gcode-layers")]
+struct SubCommandGcodeLayers {
+    /// input filename
+    #[argh(option)]
+    filename: String,
+
+    /// output directory
+    #[argh(option)]
+    outdir: String,
+
+    /// use rangeset data structure
     #[argh(switch)]
-    monotonic: bool,
+    rangeset: bool,
 }
 
 impl std::ops::Index<usize> for VoxelIdx {
@@ -234,7 +284,7 @@ fn generate_face_only() -> Model {
     mv.to_model()
 }
 
-fn generate_frames_constz() {
+fn generate_frames_constz(outdir: &String) {
     let mut mv = MonotonicVoxel::default();
 
     let mut idx = 0;
@@ -251,7 +301,7 @@ fn generate_frames_constz() {
         }
 
         let model = mv.to_model();
-        let filename = format!("constz/test_{:03}.obj", idx);
+        let filename = format!("{}/out_{:03}.obj", outdir, idx);
         model.serialize(&filename, [0f32; 3], 1f32).unwrap();
         idx += 1;
     }
@@ -333,7 +383,7 @@ fn inject_at<V: Voxel>(v: &mut V, zlow: i32, zhigh: i32, pos0: VoxelIdx, mut n: 
     }
 }
 
-fn generate_inject() {
+fn generate_inject(out: &str) {
     let mut mv = MonotonicVoxel::default();
 
     // unit: 0.02mm, layer thickness: 0.2mm, nozzle size: 0.4mm
@@ -353,10 +403,10 @@ fn generate_inject() {
     }
 
     let model = mv.to_model();
-    model.serialize("inject.obj", [0f32; 3], 1f32).unwrap();
+    model.serialize(out, [0f32; 3], 1f32).unwrap();
 }
 
-fn generate_frames() {
+fn generate_frames(outdir: &str) {
     let mut mv = MonotonicVoxel::default();
 
     let mut count: usize = 0;
@@ -372,7 +422,7 @@ fn generate_frames() {
                     if count % 20000 == 0 {
                         info!("render={:?}", (x, y, z));
                         let model = mv.to_model();
-                        let filename = format!("constblock/test_{:03}.obj", idx);
+                        let filename = format!("{}/out_{:03}.obj", outdir, idx);
                         model.serialize(&filename, [0f32; 3], 1f32).unwrap();
                         idx += 1;
                     }
@@ -382,9 +432,9 @@ fn generate_frames() {
     }
 }
 
-fn generate_gcode<V: Voxel + Default>(filename: &str, out_filename: &str) {
+fn generate_gcode<V: Voxel + Default>(filename: &str, out_filename: &str, out_layers: bool) {
     use nalgebra::Vector3;
-    use nom_gcode::{GCodeLine::GCode, Mnemonic};
+    use nom_gcode::{GCodeLine::*, Mnemonic};
 
     // unit: 0.02mm, layer thickness: 0.2mm, nozzle size: 0.4mm
     // 20mm
@@ -408,84 +458,110 @@ fn generate_gcode<V: Voxel + Default>(filename: &str, out_filename: &str) {
     let mut pos = Vector3::default();
     let mut e = 0f32;
     for line in gcode.lines() {
-        if let (_, Some(GCode(code))) = nom_gcode::parse_gcode(&line).unwrap() {
-            debug!("{}", line);
-            if code.mnemonic != Mnemonic::General {
-                continue;
-            }
-            if code.major == 0 {
-                for (letter, value) in code.arguments() {
-                    let letter = *letter;
-                    let v = value.unwrap();
-                    if letter == 'X' {
-                        pos[0] = v;
-                    }
-                    if letter == 'Y' {
-                        pos[1] = v;
-                    }
-                    if letter == 'Z' {
-                        pos[2] = v;
-                    }
+        match nom_gcode::parse_gcode(&line).unwrap() {
+            (_, Some(Comment(comment))) => {
+                let prefix = "LAYER:";
+                if !comment.0.starts_with(prefix) {
+                    continue;
                 }
-            } else if code.major == 1 {
-                let mut dst = pos;
-                let mut dst_e = e;
-                for (letter, value) in code.arguments() {
-                    let letter = *letter;
-                    let v = value.unwrap();
-                    if letter == 'X' {
-                        dst[0] = v;
-                    }
-                    if letter == 'Y' {
-                        dst[1] = v;
-                    }
-                    if letter == 'Z' {
-                        dst[2] = v;
-                    }
-                    if letter == 'E' {
-                        dst_e = v;
-                    }
-                }
-                if dst_e <= e {
-                    pos = dst;
+                let layer_idx = comment.0[prefix.len()..].parse::<usize>().unwrap();
+                if layer_idx == 0 {
                     continue;
                 }
 
-                let dir = (dst - pos).normalize();
-                let len = (dst - pos).magnitude();
+                if out_layers {
+                    let sw = Stopwatch::start_new();
+                    let model = mv.to_model();
+                    info!("to_model: took={}ms", sw.elapsed_ms());
 
-                let total_blocks = (dst_e - e) * 29000f32;
-                let mut blocks = total_blocks as usize;
-                let step_size = 0.1;
-                let blocks_per_step = (total_blocks * step_size / len) as usize;
-
-                debug!(
-                    "{:?} -> {:?}, len={}, e={:?}, blocks={}",
-                    pos,
-                    dst,
-                    len,
-                    dst_e - e,
-                    total_blocks
-                );
-
-                let mut cursor = pos;
-                while (cursor - dst).magnitude() > step_size {
-                    let next = cursor + dir * step_size;
-                    let next_pos = to_intpos([next[0], next[1], next[2]]);
-                    let z = next_pos[2];
-                    inject_at(&mut mv, z - 20, z, next_pos, blocks_per_step);
-                    cursor = next;
-                    blocks -= blocks_per_step;
+                    let sw = Stopwatch::start_new();
+                    let out_filename = format!("{}/gcode_{:03}.obj", out_filename, layer_idx);
+                    model
+                        .serialize(&out_filename, [-90f32, -90f32, 0f32], UNIT)
+                        .unwrap();
+                    info!("Model::Serialize: took={}ms", sw.elapsed_ms());
                 }
-                {
-                    let next_pos = to_intpos([dst[0], dst[1], dst[2]]);
-                    let z = next_pos[2];
-                    inject_at(&mut mv, z - 20, z, next_pos, blocks);
-                }
-
-                pos = dst;
-                e = dst_e;
             }
+            (_, Some(GCode(code))) => {
+                debug!("{}", line);
+                if code.mnemonic != Mnemonic::General {
+                    continue;
+                }
+                if code.major == 0 {
+                    for (letter, value) in code.arguments() {
+                        let letter = *letter;
+                        let v = value.unwrap();
+                        if letter == 'X' {
+                            pos[0] = v;
+                        }
+                        if letter == 'Y' {
+                            pos[1] = v;
+                        }
+                        if letter == 'Z' {
+                            pos[2] = v;
+                        }
+                    }
+                } else if code.major == 1 {
+                    let mut dst = pos;
+                    let mut dst_e = e;
+                    for (letter, value) in code.arguments() {
+                        let letter = *letter;
+                        let v = value.unwrap();
+                        if letter == 'X' {
+                            dst[0] = v;
+                        }
+                        if letter == 'Y' {
+                            dst[1] = v;
+                        }
+                        if letter == 'Z' {
+                            dst[2] = v;
+                        }
+                        if letter == 'E' {
+                            dst_e = v;
+                        }
+                    }
+                    if dst_e <= e {
+                        pos = dst;
+                        continue;
+                    }
+
+                    let dir = (dst - pos).normalize();
+                    let len = (dst - pos).magnitude();
+
+                    let total_blocks = (dst_e - e) * 29000f32;
+                    let mut blocks = total_blocks as usize;
+                    let step_size = 0.1;
+                    let blocks_per_step = (total_blocks * step_size / len) as usize;
+
+                    debug!(
+                        "{:?} -> {:?}, len={}, e={:?}, blocks={}",
+                        pos,
+                        dst,
+                        len,
+                        dst_e - e,
+                        total_blocks
+                    );
+
+                    let mut cursor = pos;
+                    while (cursor - dst).magnitude() > step_size {
+                        let next = cursor + dir * step_size;
+                        let next_pos = to_intpos([next[0], next[1], next[2]]);
+                        let z = next_pos[2];
+                        inject_at(&mut mv, z - 20, z, next_pos, blocks_per_step);
+                        cursor = next;
+                        blocks -= blocks_per_step;
+                    }
+                    {
+                        let next_pos = to_intpos([dst[0], dst[1], dst[2]]);
+                        let z = next_pos[2];
+                        inject_at(&mut mv, z - 20, z, next_pos, blocks);
+                    }
+
+                    pos = dst;
+                    e = dst_e;
+                }
+            }
+            (_, _) => (),
         }
     }
 
@@ -500,44 +576,59 @@ fn generate_gcode<V: Voxel + Default>(filename: &str, out_filename: &str) {
 
     info!("bounding box: {:?}", mv.bounding_box());
 
-    let sw = Stopwatch::start_new();
-    let model = mv.to_model();
-    info!("to_model: took={}ms", sw.elapsed_ms());
+    if !out_layers {
+        let sw = Stopwatch::start_new();
+        let model = mv.to_model();
+        info!("to_model: took={}ms", sw.elapsed_ms());
 
-    let sw = Stopwatch::start_new();
-    model
-        .serialize(&out_filename, [-90f32, -90f32, 0f32], UNIT)
-        .unwrap();
-    info!("Model::Serialize: took={}ms", sw.elapsed_ms());
+        let sw = Stopwatch::start_new();
+        model
+            .serialize(&out_filename, [-90f32, -90f32, 0f32], UNIT)
+            .unwrap();
+        info!("Model::Serialize: took={}ms", sw.elapsed_ms());
+    }
 }
 
 fn main() {
     env_logger::init();
 
-    let opt: Opt = argh::from_env();
+    let opt: TopLevel = argh::from_env();
 
-    if opt.frames_constz {
-        generate_frames_constz();
-    } else if opt.frames {
-        generate_frames();
-    } else if opt.inject {
-        generate_inject();
-    } else if let Some(filename) = opt.gcode_filename {
-        let out_filename = opt.out_filename.unwrap_or_else(|| "gcode.obj".to_string());
-        if opt.monotonic {
-            generate_gcode::<MonotonicVoxel>(&filename, &out_filename);
-        } else {
-            generate_gcode::<RangeSetVoxel>(&filename, &out_filename);
+    match opt.nested {
+        SubCommandEnum::DemoSphereFrames(opt) => {
+            if opt.constz {
+                generate_frames_constz(&opt.outdir);
+            } else {
+                generate_frames(&opt.outdir);
+            }
         }
-    } else {
-        let model = if opt.bruteforce {
-            generate_brute_force()
-        } else if opt.shell {
-            generate_shell()
-        } else {
-            generate_face_only()
-        };
 
-        model.serialize("test.obj", [0f32; 3], 1f32).unwrap();
+        SubCommandEnum::DemoSphere(opt) => {
+            let model = if opt.bruteforce {
+                generate_brute_force()
+            } else if opt.shell {
+                generate_shell()
+            } else {
+                generate_face_only()
+            };
+
+            model.serialize(&opt.out, [0f32; 3], 1f32).unwrap();
+        }
+
+        SubCommandEnum::DemoInject(opt) => {
+            generate_inject(&opt.out);
+        }
+
+        SubCommandEnum::Gcode(opt) => {
+            generate_gcode::<MonotonicVoxel>(&opt.filename, &opt.out, false);
+        }
+
+        SubCommandEnum::GcodeLayers(opt) => {
+            if opt.rangeset {
+                generate_gcode::<RangeSetVoxel>(&opt.filename, &opt.outdir, true);
+            } else {
+                generate_gcode::<MonotonicVoxel>(&opt.filename, &opt.outdir, true);
+            }
+        }
     }
 }
