@@ -75,11 +75,15 @@ struct DemoInject {
 struct SubCommandGcode {
     /// input filename
     #[argh(option)]
-    filename: String,
+    gcode: String,
 
     /// output filename
     #[argh(option)]
     out: String,
+
+    /// target number of layers
+    #[argh(option)]
+    layer: Option<usize>,
 }
 
 #[derive(FromArgs, PartialEq, Debug)]
@@ -88,7 +92,7 @@ struct SubCommandGcode {
 struct SubCommandGcodeLayers {
     /// input filename
     #[argh(option)]
-    filename: String,
+    gcode: String,
 
     /// output directory
     #[argh(option)]
@@ -432,7 +436,12 @@ fn generate_frames(outdir: &str) {
     }
 }
 
-fn generate_gcode<V: Voxel + Default>(filename: &str, out_filename: &str, out_layers: bool) {
+fn generate_gcode<V: Voxel + Default>(
+    filename: &str,
+    out_filename: &str,
+    layer: usize,
+    out_layers: bool,
+) {
     use nalgebra::Vector3;
     use nom_gcode::{GCodeLine::*, Mnemonic};
 
@@ -467,6 +476,10 @@ fn generate_gcode<V: Voxel + Default>(filename: &str, out_filename: &str, out_la
                 let layer_idx = comment.0[prefix.len()..].parse::<usize>().unwrap();
                 if layer_idx == 0 {
                     continue;
+                }
+
+                if layer_idx == layer {
+                    break;
                 }
 
                 if out_layers {
@@ -620,14 +633,16 @@ fn main() {
         }
 
         SubCommandEnum::Gcode(opt) => {
-            generate_gcode::<MonotonicVoxel>(&opt.filename, &opt.out, false);
+            let layer = opt.layer.unwrap_or(std::usize::MAX);
+            generate_gcode::<MonotonicVoxel>(&opt.gcode, &opt.out, layer, false);
         }
 
         SubCommandEnum::GcodeLayers(opt) => {
+            let layer = std::usize::MAX;
             if opt.rangeset {
-                generate_gcode::<RangeSetVoxel>(&opt.filename, &opt.outdir, true);
+                generate_gcode::<RangeSetVoxel>(&opt.gcode, &opt.outdir, layer, true);
             } else {
-                generate_gcode::<MonotonicVoxel>(&opt.filename, &opt.outdir, true);
+                generate_gcode::<MonotonicVoxel>(&opt.gcode, &opt.outdir, layer, true);
             }
         }
     }
