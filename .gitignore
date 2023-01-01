@@ -4,3 +4,4 @@ constblock
 constz
 gcode
 *.gcode
+*.blend1
