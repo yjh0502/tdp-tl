@@ -1,5 +1,7 @@
 # FDM 3d-printer simulator
 
+`tdp-tl` is a 3D printer simulator which targets to simulate visual artifacts of FDM printing: layer lines, under/over extrusion marks, ringing/ghosting, infills, supports.
+
 ## Getting Started
 
 ```sh
