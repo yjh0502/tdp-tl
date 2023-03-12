@@ -194,6 +194,16 @@ impl Model {
         self.add_face(coord, [0, -1, -1].into());
     }
 
+    fn merge(&mut self, other: Self) {
+        for [i0, i1, i2, i3] in other.faces {
+            let i0 = self.add_vert(other.vertices[i0]);
+            let i1 = self.add_vert(other.vertices[i1]);
+            let i2 = self.add_vert(other.vertices[i2]);
+            let i3 = self.add_vert(other.vertices[i3]);
+            self.faces.push([i0, i1, i2, i3]);
+        }
+    }
+
     fn serialize(&self, path: &str, offset: [f32; 3], scale: f32) -> Result<()> {
         use std::io::Write;
 
@@ -511,7 +521,7 @@ fn generate_gcode<V: Voxel + Default>(
                     let out_filename = format!("{}/gcode_{:03}.obj", out_filename, layer_idx);
                     model.serialize(&out_filename, [-90f32, -90f32, 0f32], UNIT)?;
                     info!(
-                        "Model::Serialize: took={}ms, filename={}",
+                        "Model::serialize: took={}ms, filename={}",
                         sw.elapsed_ms(),
                         out_filename
                     );

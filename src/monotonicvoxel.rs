@@ -1,4 +1,5 @@
 use super::{BoundingBox, Model, Voxel, VoxelIdx};
+use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::ops::Range;
 
@@ -83,46 +84,54 @@ impl Voxel for MonotonicVoxel {
     }
 
     fn to_model(&self) -> Model {
-        let mut model = Model::default();
+        self.ranges
+            .par_iter()
+            .map(|(coord, ranges)| {
+                let mut model = Model::default();
 
-        for (coord, ranges) in self.ranges.iter() {
-            for range in ranges {
-                if Range::is_empty(range) {
-                    continue;
-                }
+                for range in ranges {
+                    if Range::is_empty(range) {
+                        continue;
+                    }
 
-                let x = coord[0];
-                let y = coord[1];
+                    let x = coord[0];
+                    let y = coord[1];
 
-                /*
-                if !self.occupied([x, y, range.start - 1].into()) {
-                    model.add_face([x, y, range.start].into(), up);
-                }
-                */
-                if !self.occupied([x, y, range.end].into()) {
-                    model.add_face([x + 1, y + 1, range.end].into(), [-1, -1, 0].into());
-                }
+                    /*
+                    if !self.occupied([x, y, range.start - 1].into()) {
+                        model.add_face([x, y, range.start].into(), up);
+                    }
+                    */
+                    if !self.occupied([x, y, range.end].into()) {
+                        model.add_face([x + 1, y + 1, range.end].into(), [-1, -1, 0].into());
+                    }
 
-                let faces = [
-                    ([1, 0], [1, 1, 1], [0, -1, -1]),
-                    // ([-1, 0], [0, 0, 0], [0, 1, 1]),
-                    ([0, 1], [1, 1, 1], [-1, 0, -1]),
-                    // ([0, -1], [0, 0, 0], [1, 0, 1]),
-                ];
+                    let faces = [
+                        ([1, 0], [1, 1, 1], [0, -1, -1]),
+                        // ([-1, 0], [0, 0, 0], [0, 1, 1]),
+                        ([0, 1], [1, 1, 1], [-1, 0, -1]),
+                        // ([0, -1], [0, 0, 0], [1, 0, 1]),
+                    ];
 
-                for ([dx, dy], offset, dir) in faces {
-                    for z in range.clone() {
-                        if !self.occupied([x + dx, y + dy, z].into()) {
-                            model.add_face(
-                                [x + offset[0], y + offset[1], z + offset[2]].into(),
-                                dir.into(),
-                            );
+                    for ([dx, dy], offset, dir) in faces {
+                        for z in range.clone() {
+                            if !self.occupied([x + dx, y + dy, z].into()) {
+                                model.add_face(
+                                    [x + offset[0], y + offset[1], z + offset[2]].into(),
+                                    dir.into(),
+                                );
+                            }
                         }
                     }
                 }
-            }
-        }
-
-        model
+                model
+            })
+            .reduce(
+                || Model::default(),
+                |mut a, b| {
+                    a.merge(b);
+                    a
+                },
+            )
     }
 }
