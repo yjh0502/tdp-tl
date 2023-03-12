@@ -8,7 +8,7 @@
 cargo build --release
 
 # generate obj models, from gcode layer by layer
-tdp-tl gcode-layers --gcode KK_xyzCalibration_cube.gcode --outdir gcode/
+tdp-tl gcode-layers --gcode demo/KK_xyzCalibration_cube.gcode --outdir gcode/
 
 # render obj model to still image, with blender
 find gcode/ -maxdepth 1 -type f -name '*.obj' \
