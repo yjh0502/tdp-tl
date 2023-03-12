@@ -5,10 +5,10 @@ argv = sys.argv
 argv = argv[argv.index("--") + 1:]
 
 prefix = argv[0]
-idx = argv[1]
+idx = int(argv[1])
 
-infile = "{}/gcode/gcode_{}.obj".format(prefix, idx)
-outfile = "{}/gcode/render/gcode_{}.png".format(prefix, idx)
+infile = "%s/gcode/gcode_%03d.obj" % (prefix, idx)
+outfile = "%s/gcode/render/gcode_%03d.png" % (prefix, idx)
 
 bpy.context.scene.render.filepath = outfile
 bpy.ops.import_scene.obj(filepath=infile, axis_forward="Y", axis_up="Z")
